@@ -125,7 +125,9 @@ def get_one_hot(size, ind):
     :param ind: the entry index to turn to 1
     :return: numpy ndarray which represents the one-hot vector
     """
-    return
+    one_vec = np.zeros(size)
+    one_vec[ind]+=1
+    return one_vec
 
 
 def average_one_hots(sent, word_to_ind):
@@ -136,7 +138,14 @@ def average_one_hots(sent, word_to_ind):
     :param word_to_ind: a mapping between words to indices
     :return:
     """
-    return
+    # todo need to figure out what it means
+    vec_size = len(word_to_ind)
+    res = np.zeros(vec_size)
+    all_words = sent.get_leaves()
+    for word in all_words:
+        word_text = word.text[0]
+        res += get_one_hot(vec_size, word_to_ind[word_text])
+    return res / len(all_words)
 
 
 def get_word_to_ind(words_list):
@@ -146,7 +155,7 @@ def get_word_to_ind(words_list):
     :param words_list: a list of words
     :return: the dictionary mapping words to the index
     """
-    return
+    return dict(zip(words_list, range(len(words_list))))
 
 
 def sentence_to_embedding(sent, word_to_vec, seq_len, embedding_dim=300):
@@ -193,7 +202,8 @@ class DataManager():
     evaluation.
     """
 
-    def __init__(self, data_type=ONEHOT_AVERAGE, use_sub_phrases=True, dataset_path="stanfordSentimentTreebank", batch_size=50,
+    def __init__(self, data_type=ONEHOT_AVERAGE, use_sub_phrases=True, dataset_path="stanfordSentimentTreebank",
+                 batch_size=50,
                  embedding_dim=None):
         """
         builds the data manager used for training and evaluation.
@@ -264,14 +274,13 @@ class DataManager():
         return self.torch_datasets[TRAIN][0][0].shape
 
 
-
-
 # ------------------------------------ Models ----------------------------------------------------
 
 class LSTM(nn.Module):
     """
     An LSTM for sentiment analysis with architecture as described in the exercise description.
     """
+
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout):
         return
 
@@ -286,18 +295,23 @@ class LogLinear(nn.Module):
     """
     general class for the log-linear models for sentiment analysis.
     """
+
     def __init__(self, embedding_dim):
-        return
+        super(LogLinear, self).__init__()
+        self.layer1 = nn.Linear(embedding_dim,1)
 
     def forward(self, x):
-        return
+        output = self.layer1(x)
+        return output
 
     def predict(self, x):
-        return
+        output = self.forward(x)
+        output = torch.sigmoid(output)
+        output = torch.where(output > 0.5, 1, 0)
+        return output
 
 
 # ------------------------- training functions -------------
-
 
 def binary_accuracy(preds, y):
     """
@@ -308,7 +322,10 @@ def binary_accuracy(preds, y):
     :return: scalar value - (<number of accurate predictions> / <number of examples>)
     """
 
-    return
+
+    binary_preds = torch.where(preds>0.5,1,0)
+    correct = torch.sum(binary_preds == y)
+    return correct / len(binary_preds)
 
 
 def train_epoch(model, data_iterator, optimizer, criterion):
@@ -320,8 +337,20 @@ def train_epoch(model, data_iterator, optimizer, criterion):
     :param optimizer: the optimizer object for the training process.
     :param criterion: the criterion object for the training process.
     """
-
-    return
+    data_len = len(data_iterator)
+    total_loss, total_acc = 0, 0
+    preds,lables = torch.empty(0),torch.empty(0)
+    for x, y in data_iterator:
+        optimizer.zero_grad()
+        output = model(x.to(torch.float32))
+        preds = torch.cat((preds,output))
+        lables = torch.cat((lables,y))
+        loss = criterion(torch.squeeze(output), y)
+        loss.backward()  # todo check if needed
+        total_loss += loss.item()
+        optimizer.step()
+    t_a = binary_accuracy(preds,lables)
+    return total_loss / data_len, t_a
 
 
 def evaluate(model, data_iterator, criterion):
@@ -332,7 +361,20 @@ def evaluate(model, data_iterator, criterion):
     :param criterion: the loss criterion used for evaluation
     :return: tuple of (average loss over all examples, average accuracy over all examples)
     """
-    return
+    preds,lables = torch.empty(0),torch.empty(0)
+    data_len = len(data_iterator)
+    total_loss, total_acc = 0, 0
+    with torch.no_grad():
+        for x, y in data_iterator:
+            output = model(x)
+            preds = torch.cat((preds, output))
+            lables = torch.cat((lables, y))
+            # total_acc += np.sum(prediction == y)  # TODO: .item()???
+            loss = criterion(output, y)
+            total_loss += loss.item()
+    t_a = binary_accuracy(preds,lables)
+
+    return total_loss / data_len, t_a
 
 
 def get_predictions_for_data(model, data_iter):
@@ -345,7 +387,10 @@ def get_predictions_for_data(model, data_iter):
     :param data_iter: torch iterator as given by the DataManager
     :return:
     """
-    return
+    preds = []
+    for d in data_iter:
+        preds.append(model.predict(d))
+    return preds
 
 
 def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
@@ -358,14 +403,31 @@ def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
     :param lr: learning rate to be used for optimization
     :param weight_decay: parameter for l2 regularization
     """
-    return
+    # TODO HANDLE VALIDATION
+    t_losses, t_accuracies, v_losses, v_accuracies = [], [], [], []
+    criterion = torch.nn.CrossEntropyLoss()
+    # optim = torch.optim.SGD(logistic_model.parameters(), lr=lr_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)  # TODO , lr and wd default??
+    t_data_iterator = data_manager.get_torch_iterator(TRAIN)
+    v_data_iterator = data_manager.get_torch_iterator(VAL)
+    for epoc in range(n_epochs):
+        t_loss, t_acc = train_epoch(model, t_data_iterator, optimizer, criterion)
+        v_loss, v_acc = evaluate(model, v_data_iterator, criterion)
+        t_losses.append(t_loss)
+        t_accuracies.append(t_acc)
+        v_losses.append(v_loss)
+        v_accuracies.append(v_acc)
+    return t_losses, t_accuracies, v_losses, v_accuracies  # todo this is save?
 
 
 def train_log_linear_with_one_hot():
     """
     Here comes your code for training and evaluation of the log linear model with one hot representation.
     """
-    return
+    DM = DataManager(batch_size=64)
+    embed_dims = len(DM.sentiment_dataset.get_word_counts())
+    log_linear = LogLinear(embed_dims)
+    t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01,weight_decay=0.001)
 
 
 def train_log_linear_with_w2v():
@@ -384,6 +446,7 @@ def train_lstm_with_w2v():
 
 
 if __name__ == '__main__':
+    # print(np.ones(3))
     train_log_linear_with_one_hot()
     # train_log_linear_with_w2v()
     # train_lstm_with_w2v()
