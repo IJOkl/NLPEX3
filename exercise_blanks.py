@@ -115,7 +115,15 @@ def get_w2v_average(sent, word_to_vec, embedding_dim):
     :param embedding_dim: the dimension of the word embedding vectors
     :return The average embedding vector as numpy ndarray.
     """
-    return
+    cnt = 0
+    res = np.zeros(embedding_dim)
+    all_words = sent.get_leaves()
+    for word in all_words:
+        word_text = word.text[0]
+        if word_text in word_to_vec:
+            cnt+=1
+            res += word_to_vec[word_text]
+    return res / cnt
 
 
 def get_one_hot(size, ind):
@@ -349,7 +357,7 @@ def train_epoch(model, data_iterator, optimizer, criterion):
         loss.backward()  # todo check if needed
         total_loss += loss.item()
         optimizer.step()
-    t_a = binary_accuracy(preds,lables)
+    t_a = binary_accuracy(torch.squeeze(preds),lables)
     return total_loss / data_len, t_a
 
 
@@ -366,14 +374,13 @@ def evaluate(model, data_iterator, criterion):
     total_loss, total_acc = 0, 0
     with torch.no_grad():
         for x, y in data_iterator:
-            output = model(x)
+            output = model(x.to(torch.float32))
             preds = torch.cat((preds, output))
             lables = torch.cat((lables, y))
             # total_acc += np.sum(prediction == y)  # TODO: .item()???
-            loss = criterion(output, y)
+            loss = criterion(torch.squeeze(output), y)
             total_loss += loss.item()
-    t_a = binary_accuracy(preds,lables)
-
+    t_a = binary_accuracy(torch.squeeze(preds),lables)
     return total_loss / data_len, t_a
 
 
