@@ -82,8 +82,9 @@ def load_word2vec():
     """
     import gensim.downloader as api
     wv_from_bin = api.load("word2vec-google-news-300")
-    vocab = list(wv_from_bin.vocab.keys())
-    print(wv_from_bin.vocab[vocab[0]])
+    # vocab = list(wv_from_bin.vocab.keys())
+    vocab = list(wv_from_bin.key_to_index.keys())
+    print(wv_from_bin.key_to_index[vocab[0]])
     print("Loaded vocab size %i" % len(vocab))
     return wv_from_bin
 
@@ -426,6 +427,10 @@ def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
         v_accuracies.append(v_acc)
     return t_losses, t_accuracies, v_losses, v_accuracies  # todo this is save?
 
+# def plot_graphs(t_losses, t_accuracies, v_losses, v_accuracies):
+#     for e in
+
+
 
 def train_log_linear_with_one_hot():
     """
@@ -442,7 +447,12 @@ def train_log_linear_with_w2v():
     Here comes your code for training and evaluation of the log linear model with word embeddings
     representation.
     """
-    return
+    DM = DataManager(batch_size=64,data_type=W2V_AVERAGE,embedding_dim=300)
+    embed_dims = len(DM.sentiment_dataset.get_word_counts())
+    print(embed_dims)
+    exit()
+    log_linear = LogLinear(embed_dims)
+    t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01, weight_decay=0.001)
 
 
 def train_lstm_with_w2v():
@@ -454,6 +464,6 @@ def train_lstm_with_w2v():
 
 if __name__ == '__main__':
     # print(np.ones(3))
-    train_log_linear_with_one_hot()
-    # train_log_linear_with_w2v()
+    # train_log_linear_with_one_hot()
+    train_log_linear_with_w2v()
     # train_lstm_with_w2v()
