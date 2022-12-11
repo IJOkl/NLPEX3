@@ -26,6 +26,7 @@ def get_sentiment_class_from_val(sentiment_val: float):
     else:
         return NEUTRAL_SENTIMENT
 
+
 class SentimentTreeNode(object):
     def __init__(self, text: list, sentiment_val: float, min_token_idx: int, children=[], parent=None):
         self.text = text

@@ -9,6 +9,8 @@ import operator
 import data_loader
 import pickle
 import tqdm
+from matplotlib import pyplot as plt
+
 
 # ------------------------------------------- Constants ----------------------------------------
 
@@ -122,7 +124,7 @@ def get_w2v_average(sent, word_to_vec, embedding_dim):
     for word in all_words:
         word_text = word.text[0]
         if word_text in word_to_vec:
-            cnt+=1
+            cnt += 1
             res += word_to_vec[word_text]
     return res / cnt
 
@@ -135,7 +137,7 @@ def get_one_hot(size, ind):
     :return: numpy ndarray which represents the one-hot vector
     """
     one_vec = np.zeros(size)
-    one_vec[ind]+=1
+    one_vec[ind] += 1
     return one_vec
 
 
@@ -307,10 +309,10 @@ class LogLinear(nn.Module):
 
     def __init__(self, embedding_dim):
         super(LogLinear, self).__init__()
-        self.layer1 = nn.Linear(embedding_dim,1)
+        self.layer1 = nn.Linear(embedding_dim, 1)
 
     def forward(self, x):
-        output = self.layer1(x)
+        output = self.layer1(x)  # TODO: change to F.?
         return output
 
     def predict(self, x):
@@ -330,11 +332,9 @@ def binary_accuracy(preds, y):
     :param y: a vector of true labels
     :return: scalar value - (<number of accurate predictions> / <number of examples>)
     """
-
-
-    binary_preds = torch.where(preds>0.5,1,0)
-    correct = torch.sum(binary_preds == y)
-    return correct / len(binary_preds)
+    # binary_preds = torch.where(preds > 0.5, 1, 0)
+    correct = (preds == y).sum().float()
+    return correct / len(preds)
 
 
 def train_epoch(model, data_iterator, optimizer, criterion):
@@ -348,17 +348,18 @@ def train_epoch(model, data_iterator, optimizer, criterion):
     """
     data_len = len(data_iterator)
     total_loss, total_acc = 0, 0
-    preds,lables = torch.empty(0),torch.empty(0)
+    preds, lables = torch.empty(0), torch.empty(0)
     for x, y in data_iterator:
         optimizer.zero_grad()
         output = model(x.to(torch.float32))
-        preds = torch.cat((preds,output))
-        lables = torch.cat((lables,y))
+        cur_pred = model.predict(x.to(torch.float32))
+        preds = torch.cat((preds, cur_pred))
+        lables = torch.cat((lables, y))
         loss = criterion(torch.squeeze(output), y)
-        loss.backward()  # todo check if needed
-        total_loss += loss.item()
+        loss.backward()
         optimizer.step()
-    t_a = binary_accuracy(torch.squeeze(preds),lables)
+        total_loss += loss.item()
+    t_a = binary_accuracy(torch.squeeze(preds), lables)
     return total_loss / data_len, t_a
 
 
@@ -370,18 +371,18 @@ def evaluate(model, data_iterator, criterion):
     :param criterion: the loss criterion used for evaluation
     :return: tuple of (average loss over all examples, average accuracy over all examples)
     """
-    preds,lables = torch.empty(0),torch.empty(0)
+    preds, lables = torch.empty(0), torch.empty(0)
     data_len = len(data_iterator)
     total_loss, total_acc = 0, 0
     with torch.no_grad():
         for x, y in data_iterator:
             output = model(x.to(torch.float32))
-            preds = torch.cat((preds, output))
+            cur_pred = model.predict(x.to(torch.float32))
+            preds = torch.cat((preds, cur_pred))
             lables = torch.cat((lables, y))
-            # total_acc += np.sum(prediction == y)  # TODO: .item()???
             loss = criterion(torch.squeeze(output), y)
             total_loss += loss.item()
-    t_a = binary_accuracy(torch.squeeze(preds),lables)
+    t_a = binary_accuracy(torch.squeeze(preds), lables)
     return total_loss / data_len, t_a
 
 
@@ -411,25 +412,32 @@ def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
     :param lr: learning rate to be used for optimization
     :param weight_decay: parameter for l2 regularization
     """
-    # TODO HANDLE VALIDATION
     t_losses, t_accuracies, v_losses, v_accuracies = [], [], [], []
-    criterion = torch.nn.CrossEntropyLoss()
-    # optim = torch.optim.SGD(logistic_model.parameters(), lr=lr_rate)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)  # TODO , lr and wd default??
+    # criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)  # TODO , lr and wd default??
     t_data_iterator = data_manager.get_torch_iterator(TRAIN)
     v_data_iterator = data_manager.get_torch_iterator(VAL)
     for epoc in range(n_epochs):
         t_loss, t_acc = train_epoch(model, t_data_iterator, optimizer, criterion)
+        # model.eval()  # TODO: needed??
         v_loss, v_acc = evaluate(model, v_data_iterator, criterion)
         t_losses.append(t_loss)
         t_accuracies.append(t_acc)
         v_losses.append(v_loss)
         v_accuracies.append(v_acc)
-    return t_losses, t_accuracies, v_losses, v_accuracies  # todo this is save?
+    return t_losses, t_accuracies, v_losses, v_accuracies
 
-# def plot_graphs(t_losses, t_accuracies, v_losses, v_accuracies):
-#     for e in
 
+def plot_graph(t_data, v_data, title, x_label, y_label):
+    plt.Figure()
+    plt.plot(t_data, label="Train")
+    plt.plot(v_data, label="Validation")
+    plt.title(title)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.legend()
+    plt.show()
 
 
 def train_log_linear_with_one_hot():
@@ -438,8 +446,11 @@ def train_log_linear_with_one_hot():
     """
     DM = DataManager(batch_size=64)
     embed_dims = len(DM.sentiment_dataset.get_word_counts())
+    print(embed_dims)
     log_linear = LogLinear(embed_dims)
-    t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01,weight_decay=0.001)
+    t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01, weight_decay=0.001)
+    plot_graph(t_losses, v_losses, "Loss - one hot", "Epochs", "Loss value")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - one hot", "Epochs", "Accuracy value")
 
 
 def train_log_linear_with_w2v():
@@ -447,12 +458,13 @@ def train_log_linear_with_w2v():
     Here comes your code for training and evaluation of the log linear model with word embeddings
     representation.
     """
-    DM = DataManager(batch_size=64,data_type=W2V_AVERAGE,embedding_dim=300)
+    DM = DataManager(batch_size=64, data_type=W2V_AVERAGE, embedding_dim=300)
     embed_dims = len(DM.sentiment_dataset.get_word_counts())
     print(embed_dims)
-    exit()
     log_linear = LogLinear(embed_dims)
     t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01, weight_decay=0.001)
+    plot_graph(t_losses, v_losses, "Loss - w2v", "Epochs", "Loss value")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - w2v", "Epochs", "Accuracy value")
 
 
 def train_lstm_with_w2v():
@@ -462,8 +474,10 @@ def train_lstm_with_w2v():
     return
 
 
+
 if __name__ == '__main__':
     # print(np.ones(3))
-    # train_log_linear_with_one_hot()
+    train_log_linear_with_one_hot()
     train_log_linear_with_w2v()
     # train_lstm_with_w2v()
+
