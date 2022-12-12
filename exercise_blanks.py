@@ -91,7 +91,7 @@ def load_word2vec():
     return wv_from_bin
 
 
-def create_or_load_slim_w2v(words_list, cache_w2v=False):
+def create_or_load_slim_w2v(words_list, cache_w2v=True):  # TODO: cache was False
     """
     returns word2vec dict only for words which appear in the dataset.
     :param words_list: list of words to use for the w2v dict
@@ -122,10 +122,12 @@ def get_w2v_average(sent, word_to_vec, embedding_dim):
     res = np.zeros(embedding_dim)
     all_words = sent.get_leaves()
     for word in all_words:
-        word_text = word.text[0]
+        word_text = word.text[0]  # TODO: tokenize??
         if word_text in word_to_vec:
             cnt += 1
             res += word_to_vec[word_text]
+    if cnt == 0:
+        return res
     return res / cnt
 
 
@@ -179,7 +181,15 @@ def sentence_to_embedding(sent, word_to_vec, seq_len, embedding_dim=300):
     :param embedding_dim: the dimension of the w2v embedding
     :return: numpy ndarray of shape (seq_len, embedding_dim) with the representation of the sentence
     """
-    return
+    res = np.zeros(shape=(seq_len, embedding_dim))
+    all_words = sent.get_leaves()
+    for i in range(len(all_words)):
+        if i == seq_len:
+            break
+        word_text = all_words[i].text[0]  # TODO: tokenize??
+        if word_text in word_to_vec:
+            res[i] = word_to_vec[word_text]
+    return res
 
 
 class OnlineDataset(Dataset):
@@ -291,15 +301,27 @@ class LSTM(nn.Module):
     """
     An LSTM for sentiment analysis with architecture as described in the exercise description.
     """
-
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout):
-        return
+        super(LSTM, self).__init__()
+        self.rnn = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim,
+                           num_layers=n_layers, dropout=dropout,
+                           bidirectional=True, batch_first=True)
+        self.hidden_size = hidden_dim
+        self.linear_layer = nn.Linear(2*hidden_dim, 1)
 
     def forward(self, text):
-        return
+        h_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TODO: cast to variable??
+        c_0 = torch.zeros(2, text.size(0), self.hidden_size)
+        output, (h_n, c_n) = self.rnn(text, (h_0, c_0))
+        out = self.linear_layer(output[:,-1,:])
+        return out
+        # return self.linear_layer(torch.cat((output[-1, 0, 0], output[0, 0, 1])))  # TODO: maybe need h_n??
 
     def predict(self, text):
-        return
+        output = self.forward(text)
+        output = torch.sigmoid(output)
+        output = torch.where(output > 0.5, 1, 0)
+        return output
 
 
 class LogLinear(nn.Module):
@@ -459,9 +481,7 @@ def train_log_linear_with_w2v():
     representation.
     """
     DM = DataManager(batch_size=64, data_type=W2V_AVERAGE, embedding_dim=300)
-    embed_dims = len(DM.sentiment_dataset.get_word_counts())
-    print(embed_dims)
-    log_linear = LogLinear(embed_dims)
+    log_linear = LogLinear(300)
     t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01, weight_decay=0.001)
     plot_graph(t_losses, v_losses, "Loss - w2v", "Epochs", "Loss value")
     plot_graph(t_accuracies, v_accuracies, "Accuracy - w2v", "Epochs", "Accuracy value")
@@ -471,13 +491,16 @@ def train_lstm_with_w2v():
     """
     Here comes your code for training and evaluation of the LSTM model.
     """
-    return
-
+    DM = DataManager(batch_size=64, data_type=W2V_SEQUENCE, embedding_dim=300)
+    lstm = LSTM(300, 100, 1, 0.5)
+    t_losses, t_accuracies, v_losses, v_accuracies = train_model(lstm, DM, 4, 0.001, weight_decay=0.0001)
+    plot_graph(t_losses, v_losses, "Loss - lstm", "Epochs", "Loss value")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - lstm", "Epochs", "Accuracy value")
 
 
 if __name__ == '__main__':
     # print(np.ones(3))
-    train_log_linear_with_one_hot()
-    train_log_linear_with_w2v()
-    # train_lstm_with_w2v()
+    # train_log_linear_with_one_hot()
+    # train_log_linear_with_w2v()
+    train_lstm_with_w2v()
 
