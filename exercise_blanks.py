@@ -151,7 +151,7 @@ def average_one_hots(sent, word_to_ind):
     :param word_to_ind: a mapping between words to indices
     :return:
     """
-    # todo need to figure out what it means
+    # TODO: improve performance!
     vec_size = len(word_to_ind)
     res = np.zeros(vec_size)
     all_words = sent.get_leaves()
@@ -308,12 +308,13 @@ class LSTM(nn.Module):
                            bidirectional=True, batch_first=True)
         self.hidden_size = hidden_dim
         self.linear_layer = nn.Linear(2*hidden_dim, 1)
+        # TODO: add Dropout layer??
 
     def forward(self, text):
         h_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TODO: cast to variable??
-        c_0 = torch.zeros(2, text.size(0), self.hidden_size)
+        c_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TOOD: .to(device)??
         output, (h_n, c_n) = self.rnn(text, (h_0, c_0))
-        out = self.linear_layer(output[:,-1,:])
+        out = self.linear_layer(output[:, -1, :])
         return out
         # return self.linear_layer(torch.cat((output[-1, 0, 0], output[0, 0, 1])))  # TODO: maybe need h_n??
 
@@ -371,18 +372,20 @@ def train_epoch(model, data_iterator, optimizer, criterion):
     data_len = len(data_iterator)
     total_loss, total_acc = 0, 0
     preds, lables = torch.empty(0), torch.empty(0)
-    for x, y in data_iterator:
+    for i, (x, y) in enumerate(data_iterator):
         optimizer.zero_grad()
-        output = model(x.to(torch.float32))
-        cur_pred = model.predict(x.to(torch.float32))
+        output = model(x.to(torch.float32))  # TODO: replace with .float()?
+        cur_pred = model.predict(x.to(torch.float32))  # TODO: replace with .float()?
         preds = torch.cat((preds, cur_pred))
         lables = torch.cat((lables, y))
         loss = criterion(torch.squeeze(output), y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
+        if i%100 == 1:
+            print(f"average loss after {i} steps: {total_loss / i}")
     t_a = binary_accuracy(torch.squeeze(preds), lables)
-    return total_loss / data_len, t_a
+    return total_loss / data_len, t_a  # TODO: make sure right normalize
 
 
 def evaluate(model, data_iterator, criterion):
@@ -398,8 +401,8 @@ def evaluate(model, data_iterator, criterion):
     total_loss, total_acc = 0, 0
     with torch.no_grad():
         for x, y in data_iterator:
-            output = model(x.to(torch.float32))
-            cur_pred = model.predict(x.to(torch.float32))
+            output = model(x.to(torch.float32))  # TODO: replace with .float()?
+            cur_pred = model.predict(x.to(torch.float32))  # TODO: replace with .float()?
             preds = torch.cat((preds, cur_pred))
             lables = torch.cat((lables, y))
             loss = criterion(torch.squeeze(output), y)
@@ -440,26 +443,36 @@ def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)  # TODO , lr and wd default??
     t_data_iterator = data_manager.get_torch_iterator(TRAIN)
     v_data_iterator = data_manager.get_torch_iterator(VAL)
-    for epoc in range(n_epochs):
+    epoch = 0
+    # train_path = f"train_{model.__class__.__name__}.pkl"
+    # if os.path.exists(train_path):
+    #     model, optimizer, epoch = load(model, "train", optimizer)
+    while epoch < n_epochs:
+        print(f"start train epoch {epoch}")
         t_loss, t_acc = train_epoch(model, t_data_iterator, optimizer, criterion)
+        # print(f"save model")
+        # save_model(model, train_path, epoch+1, optimizer)
         # model.eval()  # TODO: needed??
+        print(f"start evaluate epoch {epoch}")
         v_loss, v_acc = evaluate(model, v_data_iterator, criterion)
         t_losses.append(t_loss)
         t_accuracies.append(t_acc)
         v_losses.append(v_loss)
         v_accuracies.append(v_acc)
+        epoch += 1
     return t_losses, t_accuracies, v_losses, v_accuracies
 
 
-def plot_graph(t_data, v_data, title, x_label, y_label):
-    plt.Figure()
-    plt.plot(t_data, label="Train")
-    plt.plot(v_data, label="Validation")
-    plt.title(title)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.legend()
+def plot_graph(t_data, v_data, title, x_label, y_label, file_name):
+    fig, ax = plt.subplots()
+    ax.plot(t_data, label="Train")
+    ax.plot(v_data, label="Validation")
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.legend()
     plt.show()
+    fig.savefig(file_name)
 
 
 def train_log_linear_with_one_hot():
@@ -468,11 +481,10 @@ def train_log_linear_with_one_hot():
     """
     DM = DataManager(batch_size=64)
     embed_dims = len(DM.sentiment_dataset.get_word_counts())
-    print(embed_dims)
     log_linear = LogLinear(embed_dims)
     t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01, weight_decay=0.001)
-    plot_graph(t_losses, v_losses, "Loss - one hot", "Epochs", "Loss value")
-    plot_graph(t_accuracies, v_accuracies, "Accuracy - one hot", "Epochs", "Accuracy value")
+    plot_graph(t_losses, v_losses, "Loss - one hot", "Epochs", "Loss value", "one_hot_loss.png")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - one hot", "Epochs", "Accuracy value", "one_hot_acc.png")
 
 
 def train_log_linear_with_w2v():
@@ -483,24 +495,26 @@ def train_log_linear_with_w2v():
     DM = DataManager(batch_size=64, data_type=W2V_AVERAGE, embedding_dim=300)
     log_linear = LogLinear(300)
     t_losses, t_accuracies, v_losses, v_accuracies = train_model(log_linear, DM, 20, 0.01, weight_decay=0.001)
-    plot_graph(t_losses, v_losses, "Loss - w2v", "Epochs", "Loss value")
-    plot_graph(t_accuracies, v_accuracies, "Accuracy - w2v", "Epochs", "Accuracy value")
+    plot_graph(t_losses, v_losses, "Loss - w2v", "Epochs", "Loss value", "w2v_loss.png")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - w2v", "Epochs", "Accuracy value", "w2v_acc.png")
 
 
 def train_lstm_with_w2v():
     """
     Here comes your code for training and evaluation of the LSTM model.
     """
+    # TODO: improve performance!
     DM = DataManager(batch_size=64, data_type=W2V_SEQUENCE, embedding_dim=300)
     lstm = LSTM(300, 100, 1, 0.5)
     t_losses, t_accuracies, v_losses, v_accuracies = train_model(lstm, DM, 4, 0.001, weight_decay=0.0001)
-    plot_graph(t_losses, v_losses, "Loss - lstm", "Epochs", "Loss value")
-    plot_graph(t_accuracies, v_accuracies, "Accuracy - lstm", "Epochs", "Accuracy value")
+    plot_graph(t_losses, v_losses, "Loss - lstm", "Epochs", "Loss value", "lstm_loss.png")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - lstm", "Epochs", "Accuracy value", "lstm_loss.png")
 
 
 if __name__ == '__main__':
+    # device = get_available_device()
     # print(np.ones(3))
-    # train_log_linear_with_one_hot()
+    train_log_linear_with_one_hot()
     # train_log_linear_with_w2v()
-    train_lstm_with_w2v()
+    # train_lstm_with_w2v()
 
