@@ -168,10 +168,11 @@ def get_word_to_ind(words_list):
     :param words_list: a list of words
     :return: the dictionary mapping words to the index
     """
+    # TODO: words_list to set??
     return dict(zip(words_list, range(len(words_list))))
 
 
-def sentence_to_embedding(sent, word_to_vec, seq_len, embedding_dim=300):
+def sentence_to_embedding(sent, word_to_vec, seq_len, embedding_dim):
     """
     this method gets a sentence and a word to vector mapping, and returns a list containing the
     words embeddings of the tokens in the sentence.
@@ -181,14 +182,11 @@ def sentence_to_embedding(sent, word_to_vec, seq_len, embedding_dim=300):
     :param embedding_dim: the dimension of the w2v embedding
     :return: numpy ndarray of shape (seq_len, embedding_dim) with the representation of the sentence
     """
-    res = np.zeros(shape=(seq_len, embedding_dim))
-    all_words = sent.get_leaves()
-    for i in range(len(all_words)):
-        if i == seq_len:
-            break
-        word_text = all_words[i].text[0]  # TODO: tokenize??
-        if word_text in word_to_vec:
-            res[i] = word_to_vec[word_text]
+    res = np.zeros((seq_len, embedding_dim))
+    all_words = sent.text[:seq_len]
+    for i, word in enumerate(all_words):
+        if word in word_to_vec:
+            res[i] = word_to_vec[word]
     return res
 
 
@@ -304,23 +302,27 @@ class LSTM(nn.Module):
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout):
         super(LSTM, self).__init__()
         self.rnn = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim,
-                           num_layers=n_layers, dropout=dropout,
-                           bidirectional=True, batch_first=True)
+                           num_layers=n_layers, bidirectional=True,
+                           batch_first=True)
         self.hidden_size = hidden_dim
         self.linear_layer = nn.Linear(2*hidden_dim, 1)
-        # TODO: add Dropout layer??
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, text):
         h_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TODO: cast to variable??
         c_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TOOD: .to(device)??
         output, (h_n, c_n) = self.rnn(text, (h_0, c_0))
-        out = self.linear_layer(output[:, -1, :])
+        # need h_n - the last hidden state - instead the last output (which different in LSTM)
+        dropout = self.dropout(torch.cat((h_n[0], h_n[1]), dim=1))
+        out = self.linear_layer(dropout)
         return out
-        # return self.linear_layer(torch.cat((output[-1, 0, 0], output[0, 0, 1])))  # TODO: maybe need h_n??
 
     def predict(self, text):
-        output = self.forward(text)
-        output = torch.sigmoid(output)
+        h_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TODO: cast to variable??
+        c_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TOOD: .to(device)??
+        output, (h_n, c_n) = self.rnn(text, (h_0, c_0))
+        out = self.linear_layer(torch.cat((h_n[0], h_n[1]), dim=1))
+        output = torch.sigmoid(out)
         output = torch.where(output > 0.5, 1, 0)
         return output
 
@@ -374,8 +376,8 @@ def train_epoch(model, data_iterator, optimizer, criterion):
     preds, lables = torch.empty(0), torch.empty(0)
     for i, (x, y) in enumerate(data_iterator):
         optimizer.zero_grad()
-        output = model(x.to(torch.float32))  # TODO: replace with .float()?
-        cur_pred = model.predict(x.to(torch.float32))  # TODO: replace with .float()?
+        output = model(x.float())  # to(torch.float32))
+        cur_pred = model.predict(x.float())  # x.to(torch.float32))  # TODO: replace with .float()?
         preds = torch.cat((preds, cur_pred))
         lables = torch.cat((lables, y))
         loss = criterion(torch.squeeze(output), y)
@@ -444,6 +446,8 @@ def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
     t_data_iterator = data_manager.get_torch_iterator(TRAIN)
     v_data_iterator = data_manager.get_torch_iterator(VAL)
     epoch = 0
+    model.to(get_available_device())
+    criterion.to(get_available_device())
     # train_path = f"train_{model.__class__.__name__}.pkl"
     # if os.path.exists(train_path):
     #     model, optimizer, epoch = load(model, "train", optimizer)
@@ -514,7 +518,7 @@ def train_lstm_with_w2v():
 if __name__ == '__main__':
     # device = get_available_device()
     # print(np.ones(3))
-    train_log_linear_with_one_hot()
+    # train_log_linear_with_one_hot()
     # train_log_linear_with_w2v()
-    # train_lstm_with_w2v()
+    train_lstm_with_w2v()
 
