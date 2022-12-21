@@ -24,6 +24,8 @@ W2V_SEQUENCE = "w2v_sequence"
 TRAIN = "train"
 VAL = "val"
 TEST = "test"
+TEST_NEGATED = "test_negated"
+TEST_RARE = "test_rare"
 
 
 # ------------------------------------------ Helper methods and classes --------------------------
@@ -91,7 +93,7 @@ def load_word2vec():
     return wv_from_bin
 
 
-def create_or_load_slim_w2v(words_list, cache_w2v=True):  # TODO: cache was False
+def create_or_load_slim_w2v(words_list, cache_w2v=True):
     """
     returns word2vec dict only for words which appear in the dataset.
     :param words_list: list of words to use for the w2v dict
@@ -120,12 +122,10 @@ def get_w2v_average(sent, word_to_vec, embedding_dim):
     """
     cnt = 0
     res = np.zeros(embedding_dim)
-    all_words = sent.get_leaves()
-    for word in all_words:
-        word_text = word.text[0]  # TODO: tokenize??
-        if word_text in word_to_vec:
+    for word in sent.text:
+        if word in word_to_vec:
             cnt += 1
-            res += word_to_vec[word_text]
+            res += word_to_vec[word]
     if cnt == 0:
         return res
     return res / cnt
@@ -151,14 +151,11 @@ def average_one_hots(sent, word_to_ind):
     :param word_to_ind: a mapping between words to indices
     :return:
     """
-    # TODO: improve performance!
     vec_size = len(word_to_ind)
     res = np.zeros(vec_size)
-    all_words = sent.get_leaves()
-    for word in all_words:
-        word_text = word.text[0]
-        res += get_one_hot(vec_size, word_to_ind[word_text])
-    return res / len(all_words)
+    for word in sent.text:
+        res += get_one_hot(vec_size, word_to_ind[word])
+    return res / len(sent.text)
 
 
 def get_word_to_ind(words_list):
@@ -168,7 +165,6 @@ def get_word_to_ind(words_list):
     :param words_list: a list of words
     :return: the dictionary mapping words to the index
     """
-    # TODO: words_list to set??
     return dict(zip(words_list, range(len(words_list))))
 
 
@@ -245,6 +241,12 @@ class DataManager():
         self.sentences[VAL] = self.sentiment_dataset.get_validation_set()
         self.sentences[TEST] = self.sentiment_dataset.get_test_set()
 
+        neg_idx = data_loader.get_negated_polarity_examples(self.sentences[TEST])
+        rare_idx = data_loader.get_rare_words_examples(self.sentences[TEST], self.sentiment_dataset)
+
+        self.sentences[TEST_NEGATED] = [self.sentences[TEST][idx] for idx in neg_idx]
+        self.sentences[TEST_RARE] = [self.sentences[TEST][idx] for idx in rare_idx]
+
         # map data splits to sentence input preperation functions
         words_list = list(self.sentiment_dataset.get_word_counts().keys())
         if data_type == ONEHOT_AVERAGE:
@@ -309,8 +311,8 @@ class LSTM(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, text):
-        h_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TODO: cast to variable??
-        c_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TOOD: .to(device)??
+        h_0 = torch.zeros(2, text.size(0), self.hidden_size)
+        c_0 = torch.zeros(2, text.size(0), self.hidden_size)
         output, (h_n, c_n) = self.rnn(text, (h_0, c_0))
         # need h_n - the last hidden state - instead the last output (which different in LSTM)
         dropout = self.dropout(torch.cat((h_n[0], h_n[1]), dim=1))
@@ -318,8 +320,8 @@ class LSTM(nn.Module):
         return out
 
     def predict(self, text):
-        h_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TODO: cast to variable??
-        c_0 = torch.zeros(2, text.size(0), self.hidden_size)  # TOOD: .to(device)??
+        h_0 = torch.zeros(2, text.size(0), self.hidden_size)
+        c_0 = torch.zeros(2, text.size(0), self.hidden_size)
         output, (h_n, c_n) = self.rnn(text, (h_0, c_0))
         out = self.linear_layer(torch.cat((h_n[0], h_n[1]), dim=1))
         output = torch.sigmoid(out)
@@ -337,7 +339,7 @@ class LogLinear(nn.Module):
         self.layer1 = nn.Linear(embedding_dim, 1)
 
     def forward(self, x):
-        output = self.layer1(x)  # TODO: change to F.?
+        output = self.layer1(x)
         return output
 
     def predict(self, x):
@@ -376,18 +378,18 @@ def train_epoch(model, data_iterator, optimizer, criterion):
     preds, lables = torch.empty(0), torch.empty(0)
     for i, (x, y) in enumerate(data_iterator):
         optimizer.zero_grad()
-        output = model(x.float())  # to(torch.float32))
-        cur_pred = model.predict(x.float())  # x.to(torch.float32))  # TODO: replace with .float()?
+        output = model(x.float())
+        cur_pred = model.predict(x.float())
         preds = torch.cat((preds, cur_pred))
         lables = torch.cat((lables, y))
         loss = criterion(torch.squeeze(output), y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-        if i%100 == 1:
-            print(f"average loss after {i} steps: {total_loss / i}")
+        # if i%100 == 1:
+        #     print(f"average loss after {i} steps: {total_loss / i}")
     t_a = binary_accuracy(torch.squeeze(preds), lables)
-    return total_loss / data_len, t_a  # TODO: make sure right normalize
+    return total_loss / data_len, t_a
 
 
 def evaluate(model, data_iterator, criterion):
@@ -403,8 +405,8 @@ def evaluate(model, data_iterator, criterion):
     total_loss, total_acc = 0, 0
     with torch.no_grad():
         for x, y in data_iterator:
-            output = model(x.to(torch.float32))  # TODO: replace with .float()?
-            cur_pred = model.predict(x.to(torch.float32))  # TODO: replace with .float()?
+            output = model(x.float())
+            cur_pred = model.predict(x.float())
             preds = torch.cat((preds, cur_pred))
             lables = torch.cat((lables, y))
             loss = criterion(torch.squeeze(output), y)
@@ -415,7 +417,6 @@ def evaluate(model, data_iterator, criterion):
 
 def get_predictions_for_data(model, data_iter):
     """
-
     This function should iterate over all batches of examples from data_iter and return all of the models
     predictions as a numpy ndarray or torch tensor (or list if you prefer). the prediction should be in the
     same order of the examples returned by data_iter.
@@ -439,31 +440,35 @@ def train_model(model, data_manager, n_epochs, lr, weight_decay=0.):
     :param lr: learning rate to be used for optimization
     :param weight_decay: parameter for l2 regularization
     """
+    print(f"Train {model.__class__.__name__} model")
     t_losses, t_accuracies, v_losses, v_accuracies = [], [], [], []
-    # criterion = torch.nn.CrossEntropyLoss()
     criterion = torch.nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)  # TODO , lr and wd default??
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     t_data_iterator = data_manager.get_torch_iterator(TRAIN)
     v_data_iterator = data_manager.get_torch_iterator(VAL)
     epoch = 0
     model.to(get_available_device())
     criterion.to(get_available_device())
-    # train_path = f"train_{model.__class__.__name__}.pkl"
+    train_path = f"train_{model.__class__.__name__}.pkl"
     # if os.path.exists(train_path):
     #     model, optimizer, epoch = load(model, "train", optimizer)
     while epoch < n_epochs:
-        print(f"start train epoch {epoch}")
+        # print(f"Train epoch {epoch}")
         t_loss, t_acc = train_epoch(model, t_data_iterator, optimizer, criterion)
-        # print(f"save model")
-        # save_model(model, train_path, epoch+1, optimizer)
-        # model.eval()  # TODO: needed??
-        print(f"start evaluate epoch {epoch}")
+        # print(f"Evaluate epoch {epoch}")
         v_loss, v_acc = evaluate(model, v_data_iterator, criterion)
         t_losses.append(t_loss)
         t_accuracies.append(t_acc)
         v_losses.append(v_loss)
         v_accuracies.append(v_acc)
         epoch += 1
+    save_model(model, train_path, n_epochs, optimizer)
+    test_loss, test_acc = evaluate(model, data_manager.get_torch_iterator(TEST), criterion)
+    print(f"Test accuracy: {test_acc}\nTest loss: {test_loss}\n")
+    _, negated_acc = evaluate(model, data_manager.get_torch_iterator(TEST_NEGATED), criterion)
+    _, rare_acc = evaluate(model, data_manager.get_torch_iterator(TEST_RARE), criterion)
+    print(f"Test accuracy for negated polarity examples: {negated_acc}")
+    print(f"Test accuracy for rare words examples: {rare_acc}\n\n")
     return t_losses, t_accuracies, v_losses, v_accuracies
 
 
@@ -507,12 +512,11 @@ def train_lstm_with_w2v():
     """
     Here comes your code for training and evaluation of the LSTM model.
     """
-    # TODO: improve performance!
     DM = DataManager(batch_size=64, data_type=W2V_SEQUENCE, embedding_dim=300)
     lstm = LSTM(300, 100, 1, 0.5)
     t_losses, t_accuracies, v_losses, v_accuracies = train_model(lstm, DM, 4, 0.001, weight_decay=0.0001)
     plot_graph(t_losses, v_losses, "Loss - lstm", "Epochs", "Loss value", "lstm_loss.png")
-    plot_graph(t_accuracies, v_accuracies, "Accuracy - lstm", "Epochs", "Accuracy value", "lstm_loss.png")
+    plot_graph(t_accuracies, v_accuracies, "Accuracy - lstm", "Epochs", "Accuracy value", "lstm_acc.png")
 
 
 if __name__ == '__main__':
@@ -521,4 +525,3 @@ if __name__ == '__main__':
     # train_log_linear_with_one_hot()
     # train_log_linear_with_w2v()
     train_lstm_with_w2v()
-
